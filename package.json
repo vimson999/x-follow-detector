@@ -1,0 +1,15 @@
+{
+  "name": "byebyebot",
+  "version": "1.0.0",
+  "description": "A Chrome extension to detect non-followers on X (Twitter).",
+  "author": "ByeByeBot Contributors",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/yourusername/byebyebot.git"
+  },
+  "bugs": {
+    "url": "https://github.com/yourusername/byebyebot/issues"
+  },
+  "homepage": "https://github.com/yourusername/byebyebot#readme"
+}

@@ -1,0 +1,26 @@
+{
+  "manifest_version": 3,
+  "name": "x follow detector",
+  "version": "1.0",
+  "description": "在 X (Twitter) 关注列表中，自动标记出那些没有回关你的人。",
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://x.com/*/following",
+        "https://twitter.com/*/following"
+      ],
+      "css": [
+        "content.css"
+      ],
+      "js": [
+        "content.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ]
+}
