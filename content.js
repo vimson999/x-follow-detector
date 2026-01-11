@@ -324,19 +324,19 @@ async function executeFollowAction(tweetElement, btn) {
 // --- 主调度器 ---
 
 let pollingInterval;
+let lastUrl = window.location.href; // 记录当前 URL
 
 function startPolling() {
-  // 清除旧的轮询
   if (pollingInterval) clearInterval(pollingInterval);
   
   let attempts = 0;
-  const maxAttempts = 10; // 最多尝试 10 次 (约 20秒)
+  // 增加轮询次数到 30次 (15秒)，覆盖更慢的加载
+  const maxAttempts = 30; 
   
-  // 立即执行一次
+  // 立即执行
   runFollowingDetector();
   runCommentMonitor();
 
-  // 轮询检查
   pollingInterval = setInterval(() => {
     attempts++;
     runFollowingDetector();
@@ -345,15 +345,23 @@ function startPolling() {
     if (attempts >= maxAttempts) {
       clearInterval(pollingInterval);
     }
-  }, 500); // 优化：缩短间隔至 500ms，提升响应速度
+  }, 500);
 }
 
 function init() {
   const observer = new MutationObserver((mutations) => {
-    // 只要 URL 对了，任何 DOM 变动都值得一试（解决 URL 滞后更新的问题）
+    // 1. URL 变化检测 (SPA 导航的核心修复)
+    if (window.location.href !== lastUrl) {
+      lastUrl = window.location.href;
+      console.log('URL Changed, restarting detector...');
+      startPolling(); // URL 变了，强制重启轮询
+    }
+
+    // 2. DOM 变动检测
+    // 只要在目标页面，且有节点增加，就尝试运行
     const isTargetPage = window.location.pathname.includes('/following') || window.location.pathname.includes('/status/');
-    
     if (isTargetPage) {
+      // 这里的运行开销很小，因为它内部有 check 逻辑
       runFollowingDetector();
       runCommentMonitor();
     }
@@ -361,39 +369,28 @@ function init() {
 
   observer.observe(document.body, { childList: true, subtree: true });
 
-  // 启动轮询机制，解决首次加载慢的问题
+  // 初始启动
   startPolling();
 
-  // 路由跳转监听
-  window.addEventListener('popstate', () => {
-    // 路由变了，重启轮询
-    startPolling();
+  // 辅助监听
+  window.addEventListener('popstate', startPolling);
+  
+  // 滚动监听 (保留)
+  let scrollTimeout;
+  window.addEventListener('scroll', () => {
+    if (!scrollTimeout) {
+      scrollTimeout = setTimeout(() => {
+        if (window.location.pathname.includes('/status/')) runCommentMonitor();
+        if (window.location.pathname.includes('/following')) runFollowingDetector();
+        scrollTimeout = null;
+      }, 200);
+    }
   });
   
-  // 监听 pushState
-  const originalPushState = history.pushState;
-  history.pushState = function() {
-    originalPushState.apply(this, arguments);
-    startPolling();
-  };
+  // 移除无效的 history hack，保持代码纯净
   
-  // 监听 ReplaceState (有时候 X 用这个)
-  const originalReplaceState = history.replaceState;
-  history.replaceState = function() {
-    originalReplaceState.apply(this, arguments);
-    startPolling();
-  };
-
-  // 全局点击监听 (针对 Tab 切换)
-  document.addEventListener('click', (e) => {
-    // 如果点击的是链接或 Tab，稍微延迟后检测
-    // 简单的策略：任何点击都触发一次短轮询，反正开销很小
-    startPolling();
-  });
-  
-  console.log('%c👋 ByeByeBot Enhanced (v1.3.2)', 'color: #ff4d4d; font-weight: bold;');
+  console.log('%c👋 ByeByeBot Enhanced (v1.3.4)', 'color: #ff4d4d; font-weight: bold;');
 }
-
 if (document.readyState === 'loading') {
   document.addEventListener('DOMContentLoaded', init);
 } else {
