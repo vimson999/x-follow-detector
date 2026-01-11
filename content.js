@@ -1,177 +1,401 @@
 /**
- * @fileoverview ByeByeBot - X (Twitter) 单向关注检测器
- * @description 自动识别并高亮关注列表中未回关的用户。
- * @version 1.0.2
+ * @fileoverview ByeByeBot - X (Twitter) 增强助手
+ * @description 包含“单向关注检测”、“评论区智能关注”与“数据采集”三大核心模块。
+ * @version 1.3.0
  * @author ByeByeBot Contributors
  * @license MIT
  */
 
 /**
- * 核心配置常量
- * @constant
+ * 全局配置与常量
  */
 const CONFIG = {
-  /**
-   * DOM 选择器
-   */
   SELECTORS: {
-    // 限定在主内容列 (primaryColumn) 查找，排除右侧边栏
+    // Following 列表相关
     USER_CELL: '[data-testid="primaryColumn"] [data-testid="UserCell"]',
     FOLLOW_INDICATOR: '[data-testid="userFollowIndicator"]',
-    // 新增：头像容器选择器 (用于精准定位 Badge)
     AVATAR_CONTAINER: '[data-testid^="UserAvatar-Container-"]',
+    USER_NAME: '[data-testid="User-Name"]',
+    
+    // 评论区相关
+    TWEET_ARTICLE: 'article[data-testid="tweet"]',
+    ACTION_BAR: '[role="group"]', // 评论底部的操作栏
+    CARET_BTN: '[data-testid="caret"]', // 那个"更多"的三个点按钮
+    DROPDOWN: '[data-testid="Dropdown"]', // 点击后弹出的菜单
+    MENU_ITEM: '[role="menuitem"]',
   },
-  /**
-   * 应用的 CSS 类名
-   */
   CLASSES: {
     TARGET: 'byebyebot-target',
     BADGE: 'byebyebot-badge',
+    FOLLOW_BTN: 'byebyebot-follow-btn', // 一键关注按钮
+    BTN_WRAPPER: 'byebyebot-btn-wrapper',
   },
-  /**
-   * 性能相关配置
-   */
   ATTRIBUTES: {
     CHECKED: 'data-byebyebot-checked',
+    BTN_INJECTED: 'data-byebyebot-btn-injected', // 标记是否已注入过按钮容器
+    STATUS_CHECKED: 'data-byebyebot-status-checked', // 标记是否已检测过关注状态
   },
   TIMEOUT_DELAY: 1000,
 };
 
-/**
- * 主逻辑函数：执行单次检测
- * @returns {void}
- */
-function runByeByeBot() {
-  // 严谨校验：只在 /following 路径下运行
-  if (!window.location.pathname.endsWith('/following')) {
-    return;
-  }
+// --- 模块 1: 单向关注检测 (Following 列表) ---
+
+function runFollowingDetector() {
+  // 放宽匹配规则：只要路径里包含 '/following' 就运行
+  // 同时排除 '/followers' (虽然 followers 里包含 following 字样吗？不，是 distinct 的)
+  // 还要排除 Verified Followers 等其他 tab? 通常 following 就在 path 结尾或中间
+  if (!window.location.pathname.includes('/following')) return;
 
   const userCells = document.querySelectorAll(CONFIG.SELECTORS.USER_CELL);
-
   userCells.forEach((cell) => {
-    // 类型断言：确保操作的是 HTMLElement
     if (!(cell instanceof HTMLElement)) return;
-
-    // 检查是否已经是已知的“互相关注”或“已处理”
-    // 注意：如果是单向关注，我们需要持续监控它的样式，所以不能简单 return
-    const isChecked = cell.getAttribute(CONFIG.ATTRIBUTES.CHECKED) === 'true';
     
-    // 核心判断：寻找“关注了你”的标记
+    // 状态维护：鼠标移出恢复样式
+    if (!cell.dataset.byebyebotEventBound) {
+      cell.addEventListener('mouseleave', () => restoreStyles(cell));
+      cell.dataset.byebyebotEventBound = 'true';
+    }
+
     const followsYou = cell.querySelector(CONFIG.SELECTORS.FOLLOW_INDICATOR);
-
     if (!followsYou) {
-      // --- 单向关注处理逻辑 ---
-      
-      // 1. 标记状态
       cell.setAttribute(CONFIG.ATTRIBUTES.CHECKED, 'true');
+      restoreStyles(cell);
+      injectBadge(cell);
       
-      // 2. 渲染样式 (如果缺失)
-      renderOneWayWarning(cell);
-
-      // 3. 事件监听 (修复 Bug 3: 鼠标移出后样式丢失)
-      // 只有未绑定过事件时才绑定，避免重复绑定
-      if (!cell.dataset.byebyebotEventBound) {
-        cell.addEventListener('mouseleave', () => {
-          // 鼠标移出时，强制检查并恢复样式
-          restoreStyles(cell);
-        });
-        // 标记已绑定
-        cell.dataset.byebyebotEventBound = 'true';
-      }
-
+      // 数据采集：存入 Storage
+      saveOneWayUser(cell);
     } else {
-      // 互相关注，标记忽略
       cell.setAttribute(CONFIG.ATTRIBUTES.CHECKED, 'true');
     }
   });
 }
 
-/**
- * 渲染逻辑：为单向关注的用户卡片添加视觉提醒
- * @param {HTMLElement} cell - 目标用户卡片的 DOM 节点
- * @returns {void}
- */
-function renderOneWayWarning(cell) {
-  restoreStyles(cell);
-  injectBadge(cell);
-}
-
-/**
- * 样式恢复函数 (独立出来，供初始渲染和事件回调使用)
- */
 function restoreStyles(cell) {
-  if (!cell.classList.contains(CONFIG.CLASSES.TARGET)) {
-    cell.classList.add(CONFIG.CLASSES.TARGET);
+  if (cell.getAttribute(CONFIG.ATTRIBUTES.CHECKED) === 'true' && 
+      !cell.querySelector(CONFIG.SELECTORS.FOLLOW_INDICATOR)) {
+    if (!cell.classList.contains(CONFIG.CLASSES.TARGET)) {
+      cell.classList.add(CONFIG.CLASSES.TARGET);
+    }
   }
 }
 
-/**
- * Badge 注入逻辑 (修复 Bug 3: 移至头像下方)
- */
 function injectBadge(cell) {
-  // 寻找头像容器
   const avatarContainer = cell.querySelector(CONFIG.SELECTORS.AVATAR_CONTAINER);
-  
-  // 如果找不到头像容器（极端情况），回退到 cell append
   const targetContainer = avatarContainer || cell;
   
-  // 检查 Badge 是否已存在
   if (!targetContainer.querySelector(`.${CONFIG.CLASSES.BADGE}`)) {
     const badge = document.createElement('div');
     badge.textContent = '👋 Bye';
     badge.className = CONFIG.CLASSES.BADGE;
-    
-    // 插入到容器中
     targetContainer.append(badge);
-    
-    // 如果是插入到 Avatar 容器，需要确保容器是 relative 定位
-    if (avatarContainer) {
-      // 多数情况下 X 的 Avatar 容器已经是 relative 或 absolute，
-      // 但为了保险，我们在 CSS 里强制一下 badge 的定位参考系
-      // 这里不需要改 JS style，靠 CSS 处理
-    }
   }
 }
 
-// --- 初始化与生命周期管理 ---
+/**
+ * 采集并存储单向关注用户信息
+ */
+function saveOneWayUser(cell) {
+  try {
+    // 1. 提取头像
+    const img = cell.querySelector('img');
+    const avatar = img ? img.src : '';
 
-// 1. 初始执行 (处理页面已存在的元素)
-// 使用 debounce 或简单的延迟确保 SPA 路由跳转完成后再执行
-window.addEventListener('popstate', () => {
-  setTimeout(runByeByeBot, CONFIG.TIMEOUT_DELAY);
-});
+    // 2. 提取 Handle (@username) 和 昵称
+    const textContent = cell.innerText;
+    const handleMatch = textContent.match(/@(\w+)/);
+    const handle = handleMatch ? handleMatch[0] : ''; // @vimson999
+    
+    // 首席专家修复方案 v3: 基于 dir="ltr" 的结构化提取
+    // X 的昵称和推文内容通常都在 dir="ltr" 的容器里
+    const ltrNodes = cell.querySelectorAll('div[dir="ltr"]');
+    let name = 'Unknown';
+    
+    for (const node of ltrNodes) {
+      // 获取纯文本，忽略隐藏的辅助文本
+      const text = node.innerText.trim();
+      
+      // 过滤条件：
+      // 1. 不为空
+      // 2. 不包含 @ (那是 Handle)
+      // 3. 不是 "关注了你" 或 "正在关注" 等状态文本 (虽然这些通常不在 dir=ltr 里，但防一手)
+      if (text && !text.includes('@') && text !== '关注了你' && text !== '正在关注') {
+        // 还要过滤掉只是单纯 emoji 的情况吗？不，有些人的名字就是 emoji。
+        // 但要注意，X 的 emoji img 标签 alt 属性会被 innerText 读取吗？
+        // 通常 innerText 会忽略 img，除非 img 有 alt 且 CSS 没隐藏。
+        // 在您提供的 DOM 里，img 有 alt="🔆"，innerText 可能会读出来。
+        // 我们尝试只读取该节点下所有 span 的内容拼接？
+        
+        // 简单策略：取第一行
+        name = text.split('\n')[0];
+        
+        // 如果抓到的是空的或者非常短的奇怪字符，继续找下一个？
+        if (name.length > 0) break;
+      }
+    }
+    
+    // 兜底：如果没找到，尝试用 Handle 去掉 @
+    if (name === 'Unknown' && handle) {
+        name = handle.substring(1); 
+    }
+
+    if (!handle) return; 
+
+    const userData = {
+      id: handle, 
+      name: name,
+      handle: handle,
+      avatar: avatar,
+      detectedAt: Date.now()
+    };
+
+    // 3. 存入 Storage (增量更新)
+    // 检查 chrome.storage 是否可用 (防止上下文丢失报错)
+    if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
+      chrome.storage.local.get(['oneWayUsers'], (result) => {
+        const users = result.oneWayUsers || {};
+        if (!users[handle] || users[handle].avatar !== avatar) {
+          users[handle] = userData;
+          chrome.storage.local.set({ oneWayUsers: users });
+        }
+      });
+    }
+
+  } catch (err) {
+    console.error('Failed to save user:', err);
+  }
+}
+
+
+// --- 模块 2: 评论区智能关注 (Status 详情页) ---
+
+function runCommentMonitor() {
+  if (!window.location.pathname.includes('/status/')) return;
+
+  const tweets = document.querySelectorAll(CONFIG.SELECTORS.TWEET_ARTICLE);
+
+  tweets.forEach(tweet => {
+    if (tweet.getAttribute(CONFIG.ATTRIBUTES.BTN_INJECTED) === 'true') return;
+    
+    const actionBar = tweet.querySelector(CONFIG.SELECTORS.ACTION_BAR);
+    if (!actionBar) return;
+
+    const wrapper = document.createElement('div');
+    wrapper.className = CONFIG.CLASSES.BTN_WRAPPER;
+    wrapper.style.display = 'none'; 
+    wrapper.style.alignItems = 'center';
+
+    const btn = createFollowButton(tweet, wrapper);
+    wrapper.appendChild(btn);
+    actionBar.appendChild(wrapper);
+
+    tweet.setAttribute(CONFIG.ATTRIBUTES.BTN_INJECTED, 'true');
+
+    // 绑定 Hover 事件
+    tweet.addEventListener('mouseenter', () => {
+      if (tweet.getAttribute(CONFIG.ATTRIBUTES.STATUS_CHECKED) === 'true') return;
+      
+      const timer = setTimeout(() => {
+        checkFollowStatus(tweet, wrapper, btn);
+      }, 300);
+      
+      tweet.dataset.hoverTimer = timer;
+    });
+
+    tweet.addEventListener('mouseleave', () => {
+      if (tweet.dataset.hoverTimer) {
+        clearTimeout(Number(tweet.dataset.hoverTimer));
+        delete tweet.dataset.hoverTimer;
+      }
+    });
+  });
+}
+
+function createFollowButton(tweetElement, wrapper) {
+  const btn = document.createElement('div');
+  btn.className = CONFIG.CLASSES.FOLLOW_BTN;
+  btn.role = "button";
+  btn.innerHTML = `<span class="icon">➕</span><span class="text">关注</span>`;
+  
+  btn.onclick = async (e) => {
+    e.stopPropagation();
+    e.preventDefault();
+    await executeFollowAction(tweetElement, btn);
+  };
+  
+  return btn;
+}
 
 /**
- * 启动 MutationObserver 监听 DOM 变化
- * 仅在文档就绪时执行
+ * 探测关注状态
  */
-function initObserver() {
-  const observer = new MutationObserver((mutations) => {
-    // 性能优化：只有当有新节点增加时才触发检测
-    const hasNewNodes = mutations.some((m) => m.addedNodes.length > 0);
-    // 或者当 class 属性发生变化时 (虽然这可能导致高频触发，但配合 runByeByeBot 内部检查是安全的)
-    // 这里我们主要关注节点增加。样式恢复主要靠 mouseleave。
+async function checkFollowStatus(tweetElement, wrapper, btn) {
+  tweetElement.setAttribute(CONFIG.ATTRIBUTES.STATUS_CHECKED, 'true');
+
+  try {
+    const caretBtn = tweetElement.querySelector(CONFIG.SELECTORS.CARET_BTN);
+    if (!caretBtn) return;
+
+    caretBtn.click();
+    await new Promise(r => setTimeout(r, 50)); 
+
+    const menus = document.querySelectorAll('[role="menu"]');
+    const currentMenu = menus[menus.length - 1];
     
-    if (hasNewNodes) {
-      runByeByeBot();
+    if (!currentMenu) return;
+
+    const menuItems = currentMenu.querySelectorAll(CONFIG.SELECTORS.MENU_ITEM);
+    let isFollowing = false;
+    let canFollow = false;
+
+    for (const item of menuItems) {
+      const text = item.innerText;
+      if (text.includes('取消关注 @')) {
+        isFollowing = true;
+        break;
+      }
+      if (text.includes('关注 @')) {
+        canFollow = true;
+        break;
+      }
+    }
+
+    caretBtn.click(); // 关闭菜单
+
+    wrapper.style.display = 'flex';
+    wrapper.style.animation = 'byebyebot-fade-in 0.3s ease';
+
+    if (isFollowing) {
+      btn.classList.add('followed');
+      btn.innerHTML = `<span class="text">已关注</span>`;
+    } else if (canFollow) {
+      btn.classList.remove('followed');
+      btn.innerHTML = `<span class="icon">➕</span><span class="text">关注</span>`;
+    } else {
+      wrapper.style.display = 'none'; 
+    }
+
+  } catch (err) {
+    console.error('Status check failed:', err);
+  }
+}
+
+/**
+ * 执行关注动作
+ */
+async function executeFollowAction(tweetElement, btn) {
+  btn.classList.add('loading');
+  btn.innerHTML = `<span class="text">...</span>`;
+
+  try {
+    const caretBtn = tweetElement.querySelector(CONFIG.SELECTORS.CARET_BTN);
+    caretBtn.click();
+    await new Promise(r => setTimeout(r, 100)); 
+
+    const menus = document.querySelectorAll('[role="menu"]');
+    const currentMenu = menus[menus.length - 1];
+    const menuItems = currentMenu.querySelectorAll(CONFIG.SELECTORS.MENU_ITEM);
+
+    let success = false;
+    for (const item of menuItems) {
+      if (item.innerText.includes('关注 @')) {
+        item.click(); 
+        success = true;
+        break;
+      }
+    }
+
+    if (success) {
+      btn.classList.remove('loading');
+      btn.classList.add('followed');
+      btn.innerHTML = `<span class="text">已关注</span>`;
+    } else {
+      caretBtn.click(); 
+      btn.classList.remove('loading');
+      btn.innerHTML = `<span class="text">Failed</span>`;
+    }
+
+  } catch (err) {
+    btn.classList.remove('loading');
+    btn.innerHTML = `<span class="text">Err</span>`;
+  }
+}
+
+
+// --- 主调度器 ---
+
+let pollingInterval;
+
+function startPolling() {
+  // 清除旧的轮询
+  if (pollingInterval) clearInterval(pollingInterval);
+  
+  let attempts = 0;
+  const maxAttempts = 10; // 最多尝试 10 次 (约 20秒)
+  
+  // 立即执行一次
+  runFollowingDetector();
+  runCommentMonitor();
+
+  // 轮询检查
+  pollingInterval = setInterval(() => {
+    attempts++;
+    runFollowingDetector();
+    runCommentMonitor();
+
+    if (attempts >= maxAttempts) {
+      clearInterval(pollingInterval);
+    }
+  }, 500); // 优化：缩短间隔至 500ms，提升响应速度
+}
+
+function init() {
+  const observer = new MutationObserver((mutations) => {
+    // 只要 URL 对了，任何 DOM 变动都值得一试（解决 URL 滞后更新的问题）
+    const isTargetPage = window.location.pathname.includes('/following') || window.location.pathname.includes('/status/');
+    
+    if (isTargetPage) {
+      runFollowingDetector();
+      runCommentMonitor();
     }
   });
 
-  observer.observe(document.body, {
-    childList: true,
-    subtree: true,
-  });
+  observer.observe(document.body, { childList: true, subtree: true });
 
-  console.log(
-    '%c👋 ByeByeBot Initialized (v1.0.2)',
-    'color: #ff4d4d; font-weight: bold; font-size: 14px;'
-  );
+  // 启动轮询机制，解决首次加载慢的问题
+  startPolling();
+
+  // 路由跳转监听
+  window.addEventListener('popstate', () => {
+    // 路由变了，重启轮询
+    startPolling();
+  });
+  
+  // 监听 pushState
+  const originalPushState = history.pushState;
+  history.pushState = function() {
+    originalPushState.apply(this, arguments);
+    startPolling();
+  };
+  
+  // 监听 ReplaceState (有时候 X 用这个)
+  const originalReplaceState = history.replaceState;
+  history.replaceState = function() {
+    originalReplaceState.apply(this, arguments);
+    startPolling();
+  };
+
+  // 全局点击监听 (针对 Tab 切换)
+  document.addEventListener('click', (e) => {
+    // 如果点击的是链接或 Tab，稍微延迟后检测
+    // 简单的策略：任何点击都触发一次短轮询，反正开销很小
+    startPolling();
+  });
+  
+  console.log('%c👋 ByeByeBot Enhanced (v1.3.2)', 'color: #ff4d4d; font-weight: bold;');
 }
 
-// 2. 启动监听
 if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', initObserver);
+  document.addEventListener('DOMContentLoaded', init);
 } else {
-  initObserver();
+  init();
 }

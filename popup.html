@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ByeByeBot Dashboard</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="header">
+    <h1>👋 ByeByeBot</h1>
+    <span class="badge" id="count-badge">0</span>
+  </div>
+
+  <div class="container">
+    <div id="empty-state" class="empty-state">
+      <div class="icon">🔍</div>
+      <p>暂无数据</p>
+      <small>请访问 X 的“关注列表”页面以开始检测</small>
+      <a href="https://x.com/following" target="_blank" class="link-btn">前往检测</a>
+    </div>
+
+    <ul id="user-list" class="user-list">
+      <!-- 动态生成 -->
+    </ul>
+  </div>
+
+  <div class="footer">
+    <button id="clear-btn" class="btn btn-secondary">清空列表</button>
+    <!-- 批量操作将来可放在这里 -->
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
